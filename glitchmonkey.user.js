@@ -13,7 +13,7 @@ var Corruptions = {
       return this.replace(/x/ig, Math.floor(Math.random() * 10));
     },
     'image/png': function() {
-      return glitchPNG(this, function(data) { return data.replace(/0/g, ''); });
+      return glitchPNG(this, function(data) { return data.replace(/\d/g, Math.floor(Math.random() * 15)); });
     }
 };
 
