@@ -69,7 +69,6 @@ function is_glitchable(img) {
 }
 
 function glitchPNG(data, glitchBy) {
-    if(data.length > 65536) return ''; // Avoid a big image (multiple IDAT), it will fail.
     var png = new PNG(data);
     png.decompressed = glitchBy(png.decompressed);
     return png.output();
@@ -105,21 +104,27 @@ PNG.prototype = {
              + this.tail;
     },
     deflate: function(data) {
-        var cminfo = parseInt((Math.log(data.length) / Math.log(2)) - 8);
+        var self = this;
+        var wsize = 1024 * 32;
+        var cminfo = parseInt((Math.log(wsize) / Math.log(2)) - 8);
         var cmf = (cminfo << 4) | 0x8;
         var flg = 31 - ((cmf * 256 + 0) % 31);  // fdict = 0, flevel = 0
-        var c = new Array(7);
-        c[0] = cmf;
-        c[1] = flg;
-        c[2] = 1;  // final
-        var blockLength = data.length;
-        var blockLengthComp = (~blockLength & 0xffff);
-        c[3] = blockLength & 0xff;
-        c[4] = (blockLength & 0xff00) >> 8;
-        c[5] = blockLengthComp & 0xff;
-        c[6] = (blockLengthComp & 0xff00) >> 8;
+        var head = [cmf, flg];
+        var blocks = new Array(Math.ceil(data.length / wsize));
+        for(var i = 0; i < blocks.length; i++) {
+            var b = data.slice(i * wsize, (i + 1) * wsize);
+            var c = new Array(5);
+            c[0] = (i == blocks.length - 1) ? 1 : 0;
+            var blockLength = b.length;
+            var blockLengthComp = (~blockLength & 0xffff);
+            c[1] = blockLength & 0xff;
+            c[2] = (blockLength & 0xff00) >> 8;
+            c[3] = blockLengthComp & 0xff;
+            c[4] = (blockLengthComp & 0xff00) >> 8;
+            blocks[i] = self._packBytes(c) + b;
+        }
         var checksum = this._adler32(data);
-        data = this._packBytes(c) + data;
+        data = this._packBytes(head) + blocks.join('');
         return data + this._toByte4(checksum);
     },
     inflate: function(data) {
