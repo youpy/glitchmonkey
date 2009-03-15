@@ -2,6 +2,8 @@
 // @name           GlitchMonkey
 // @namespace      http://d.hatena.ne.jp/youpy/
 // @include        *
+// @require        http://www.onicos.com/staff/iz/amuse/javascript/expert/inflate.txt
+// @require        http://gist.github.com/79364.txt
 // ==/UserScript==
 
 var Corruptions = {
@@ -12,7 +14,7 @@ var Corruptions = {
       return this.replace(/x/ig, Math.floor(Math.random() * 10));
     },
     'image/png': function() {
-      return this.replace(/x/ig, Math.floor(Math.random() * 10));
+      return glitchPNG(this, function(data) { return data.replace(/0/g, ''); });
     }
 };
 
@@ -71,5 +73,5 @@ function base64encode(data) {
 }
 
 function is_glitchable(img) {
-  return img.src.match(/\.(gif|jpe?g)/i);
+  return img.src.match(/\.(gif|jpe?g|png)/i);
 }
