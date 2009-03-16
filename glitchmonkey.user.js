@@ -1,6 +1,7 @@
 // ==UserScript==
 // @name           GlitchMonkey
 // @namespace      http://d.hatena.ne.jp/youpy/
+// @description    corrompe las fotos de cualquier website
 // @include        *
 // @require        http://www.onicos.com/staff/iz/amuse/javascript/expert/inflate.txt
 // ==/UserScript==
