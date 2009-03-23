@@ -2,7 +2,6 @@
 // @name           GlitchMonkey
 // @namespace      http://d.hatena.ne.jp/youpy/
 // @include        *
-// @require        http://www.onicos.com/staff/iz/amuse/javascript/expert/inflate.txt
 // ==/UserScript==
 
 var Corruptions = {
@@ -131,8 +130,7 @@ PNG.prototype = {
         var cmf = data.charCodeAt(0);
         var flg = data.charCodeAt(1);
         var b = data.slice(2, data.length - 4);
-        // @require http://www.onicos.com/staff/iz/amuse/javascript/expert/inflate.txt
-        return zip_inflate(b);
+        return Z.inflate(b);
     },
     _toHex: function(data) {
         data = this._toByteArray(data);
@@ -235,4 +233,692 @@ PNG.prototype = {
         0x54de5729, 0x23d967bf, 0xb3667a2e, 0xc4614ab8, 0x5d681b02,
         0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d,
     ]
+};
+
+// following codes are based on http://www.onicos.com/staff/iz/amuse/javascript/expert/inflate.txt
+var Z = {
+    DECODE_STORED_BLOCK  : 0,
+    DECODE_STATIC_TREES  : 1,
+    DECODE_DYN_TREES     : 2,
+    // Tables for deflate from PKZIP's appnote.txt.
+    CPLENS: [ // Copy lengths for literal codes 257..285
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
+        35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0],
+    /* note: see note #13 above about the 258 in this list. */
+    CPLEXT: [  // Extra bits for literal codes 257..285
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
+        3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0, 99, 99], // 99==invalid
+    CPDIST: [ // Copy offsets for distance codes 0..29
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
+        257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
+        8193, 12289, 16385, 24577],
+    CPDEXT: [ // Extra bits for distance codes
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+        7, 7, 8, 8, 9, 9, 10, 10, 11, 11,
+        12, 12, 13, 13],
+    BL_ORDER: [  // Order of the bit length code lengths
+        16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15],
+    
+    inflate: function(data) {
+        return new Z.Inflater().inflate(data);
+    }
+};
+
+Z.IO = function() { this.initialize.apply(this, arguments); };
+Z.IO.prototype = {
+    MASK_BITS: [
+        0x0000,
+        0x0001, 0x0003, 0x0007, 0x000f, 0x001f, 0x003f, 0x007f, 0x00ff,
+        0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff
+    ],
+    initialize: function(data) {
+        this.input = {
+            data: data,
+            pos: 0,
+            length: 0, // bits in bit buffer
+            buffer: 0, // bit buffer
+        };
+        this.output = {
+            copyLen: 0,
+            copyDist: 0,
+            pos: 0,
+            data: ''
+        };
+    },
+    getByte: function() {
+        if(this.input.data.length == this.input.pos) return -1;
+        return this.input.data.charCodeAt(this.input.pos++) & 0xff;
+    },
+    needBits: function(n) {
+        while(this.input.length < n) {
+            this.input.buffer |= this.getByte() << this.input.length;
+            this.input.length += 8;
+        }
+    },
+    getBits: function(n) {
+        return this.input.buffer & this.MASK_BITS[n];
+    },
+    dumpBits: function(n) {
+        this.input.buffer >>= n;
+        this.input.length -= n;
+    },
+    writeStored: function(len) {
+        this.output.copyLen = len;
+        var s = this.input.data.substr(this.input.pos, len);
+        this.output.data += s;
+        this.needBits(8 * len);
+        this.dumpBits(8 * len);
+        while(this.output.copyLen > 0) {
+            this.output.copyLen--;
+            this.output.pos++;
+        }
+        return len;
+    },
+    write: function(b) {
+        this.output.pos++;
+        this.output.data += String.fromCharCode(b);
+        return 1;
+    },
+    repeat: function(len, dist) {
+        this.output.copyLen = len;
+        this.output.copyDist = dist;
+        
+        var w = this.output.pos - this.output.copyDist;
+        var l = parseInt(this.output.copyLen / w);
+        var r = this.output.copyLen % w;
+        for(var i = 0; i < l; i++) {
+            var s = this.output.data.substr(this.output.copyDist, w);
+            this.output.copyDist += w;
+            this.output.data += s;
+        }
+        var s = this.output.data.substr(this.output.copyDist, r);
+        this.output.copyDist += r;
+        this.output.data += s;
+        
+        this.output.pos += this.output.copyLen;
+        this.output.copyLen = 0;
+        
+        return len;
+    },
+    close: function() {
+        this.input.data = null;
+        this.output.data = null;
+    }
+};
+
+Z.HuffmanTree = function() { this.initialize.apply(this, arguments); };
+Z.HuffmanTree.prototype = {
+    initialize: function(
+        b,        // code lengths in bits (all assumed <= BMAX)
+        n,        // number of codes (assumed <= N_MAX)
+        s,        // number of simple-valued codes (0..s-1)
+        d,        // list of base values for non-simple codes
+        e,        // list of extra bits for non-simple codes
+        mm        // maximum lookup bits
+    ) {
+        this.BMAX = 16;   // maximum bit length of any code
+        this.N_MAX = 288; // maximum number of codes in any set
+        this.status = 0;        // 0: success, 1: incomplete table, 2: bad input
+        this.root = null;       // starting table
+        this.m = 0;             // maximum lookup bits, returns actual
+
+        /* Given a list of code lengths and a maximum table size, make a set of
+           tables to decode that set of codes.        Return zero on success, one if
+           the given code set is incomplete (the tables are still built in this
+           case), two if the input is invalid (all zero length codes or an
+           oversubscribed set of lengths), and three if not enough memory.
+           The code with value 256 is special, and the tables are constructed
+           so that no bits beyond that code are fetched when that code is
+           decoded. */
+        {
+            var a;                        // counter for codes of length k
+            var c = new Array(this.BMAX+1);        // bit length count table
+            var el;                        // length of EOB code (value 256)
+            var f;                        // i repeats in table every f entries
+            var g;                        // maximum code length
+            var h;                        // table level
+            var i;                        // counter, current code
+            var j;                        // counter
+            var k;                        // number of bits in current code
+            var lx = new Array(this.BMAX+1);        // stack of bits per table
+            var p;                        // pointer into c[], b[], or v[]
+            var pidx;                // index of p
+            var q;                        // (this.newNode) points to current table
+            var r = this.newNode(); // table entry for structure assignment
+            var u = new Array(this.BMAX); // this.newNode[BMAX][]  table stack
+            var v = new Array(this.N_MAX); // values in order of bit length
+            var w;
+            var x = new Array(this.BMAX+1);// bit offsets, then code stack
+            var xp;                        // pointer into x or c
+            var y;                        // number of dummy codes added
+            var z;                        // number of entries in current table
+            var o;
+            var tail;
+
+            tail = this.root = null;
+            for(i = 0; i < c.length; i++)
+                c[i] = 0;
+            for(i = 0; i < lx.length; i++)
+                lx[i] = 0;
+            for(i = 0; i < u.length; i++)
+                u[i] = null;
+            for(i = 0; i < v.length; i++)
+                v[i] = 0;
+            for(i = 0; i < x.length; i++)
+                x[i] = 0;
+
+            // Generate counts for each bit length
+            el = n > 256 ? b[256] : this.BMAX; // set length of EOB code, if any
+            p = b; pidx = 0;
+            i = n;
+            do {
+                c[p[pidx]]++;        // assume all entries <= BMAX
+                pidx++;
+            } while(--i > 0);
+            if(c[0] == n) {        // null input--all zero length codes
+                this.root = null;
+                this.m = 0;
+                this.status = 0;
+                return;
+            }
+
+            // Find minimum and maximum length, bound *m by those
+            for(j = 1; j <= this.BMAX; j++)
+                if(c[j] != 0)
+                    break;
+            k = j;                        // minimum code length
+            if(mm < j)
+                mm = j;
+            for(i = this.BMAX; i != 0; i--)
+                if(c[i] != 0)
+                    break;
+            g = i;                        // maximum code length
+            if(mm > i)
+                mm = i;
+
+            // Adjust last length count to fill out codes, if needed
+            for(y = 1 << j; j < i; j++, y <<= 1)
+                if((y -= c[j]) < 0) {
+                    this.status = 2;        // bad input: more codes than bits
+                    this.m = mm;
+                    return;
+                }
+            if((y -= c[i]) < 0) {
+                this.status = 2;
+                this.m = mm;
+                return;
+            }
+            c[i] += y;
+
+            // Generate starting offsets into the value table for each length
+            x[1] = j = 0;
+            p = c;
+            pidx = 1;
+            xp = 2;
+            while(--i > 0)                // note that i == g from above
+                x[xp++] = (j += p[pidx++]);
+
+            // Make a table of values in order of bit lengths
+            p = b; pidx = 0;
+            i = 0;
+            do {
+                if((j = p[pidx++]) != 0)
+                    v[x[j]++] = i;
+            } while(++i < n);
+            n = x[g];                        // set n to length of v
+
+            // Generate the Huffman codes and for each, make the table entries
+            x[0] = i = 0;                // first Huffman code is zero
+            p = v; pidx = 0;                // grab values in bit order
+            h = -1;                        // no tables yet--level -1
+            w = lx[0] = 0;                // no bits decoded yet
+            q = null;                        // ditto
+            z = 0;                        // ditto
+
+            // go through the bit lengths (k already is bits in shortest code)
+            for(; k <= g; k++) {
+                a = c[k];
+                while(a-- > 0) {
+                    // here i is the Huffman code of length k bits for value p[pidx]
+                    // make tables up to required level
+                    while(k > w + lx[1 + h]) {
+                        w += lx[1 + h]; // add bits already decoded
+                        h++;
+
+                        // compute minimum size table less than or equal to *m bits
+                        z = (z = g - w) > mm ? mm : z; // upper limit
+                        if((f = 1 << (j = k - w)) > a + 1) { // try a k-w bit table
+                            // too few codes for k-w bit table
+                            f -= a + 1;        // deduct codes from patterns left
+                            xp = k;
+                            while(++j < z) { // try smaller tables up to z bits
+                                if((f <<= 1) <= c[++xp])
+                                    break;        // enough codes to use up j bits
+                                f -= c[xp];        // else deduct codes from patterns
+                            }
+                        }
+                        if(w + j > el && w < el)
+                            j = el - w;        // make EOB code end at table
+                        z = 1 << j;        // table entries for j-bit table
+                        lx[1 + h] = j; // set table size in stack
+
+                        // allocate and link in new table
+                        q = new Array(z);
+                        for(o = 0; o < z; o++) {
+                            q[o] = this.newNode();
+                        }
+
+                        if(tail == null)
+                            tail = this.root = this.newList();
+                        else
+                            tail = tail.next = this.newList();
+                        tail.next = null;
+                        tail.list = q;
+                        u[h] = q;        // table starts after link
+
+                        /* connect to last table, if there is one */
+                        if(h > 0) {
+                            x[h] = i;                // save pattern for backing up
+                            r.b = lx[h];        // bits to dump before this table
+                            r.e = 16 + j;        // bits in this table
+                            r.t = q;                // pointer to this table
+                            j = (i & ((1 << w) - 1)) >> (w - lx[h]);
+                            u[h-1][j].e = r.e;
+                            u[h-1][j].b = r.b;
+                            u[h-1][j].n = r.n;
+                            u[h-1][j].t = r.t;
+                        }
+                    }
+
+                    // set up table entry in r
+                    r.b = k - w;
+                    if(pidx >= n)
+                        r.e = 99;                // out of values--invalid code
+                    else if(p[pidx] < s) {
+                        r.e = (p[pidx] < 256 ? 16 : 15); // 256 is end-of-block code
+                        r.n = p[pidx++];        // simple code is just the value
+                    } else {
+                        r.e = e[p[pidx] - s];        // non-simple--look up in lists
+                        r.n = d[p[pidx++] - s];
+                    }
+
+                    // fill code-like entries with r //
+                    f = 1 << (k - w);
+                    for(j = i >> w; j < z; j += f) {
+                        q[j].e = r.e;
+                        q[j].b = r.b;
+                        q[j].n = r.n;
+                        q[j].t = r.t;
+                    }
+
+                    // backwards increment the k-bit code i
+                    for(j = 1 << (k - 1); (i & j) != 0; j >>= 1)
+                        i ^= j;
+                    i ^= j;
+
+                    // backup over finished tables
+                    while((i & ((1 << w) - 1)) != x[h]) {
+                        w -= lx[h];                // don't need to update q
+                        h--;
+                    }
+                }
+            }
+
+            /* return actual size of base table */
+            this.m = lx[1];
+
+            /* Return true (1) if we were given an incomplete table */
+            this.status = ((y != 0 && g != 1) ? 1 : 0);
+        } /* end of constructor */
+    },
+    newList: function() {
+        return {
+            next: null,
+            list: null
+        };
+    },
+    newNode: function() {
+        return {
+            e: 0,   // number of extra bits or operation
+            b: 0,   // number of bits in this code or subcode
+            // union
+            n: 0,   // literal, length base, or distance base
+            t: null // (node) pointer to next level of table
+        };
+    }
+};
+
+Z.Inflater = function() { this.initialize.apply(this, arguments); };
+Z.Inflater.prototype = {
+    initialize: function() {
+        this.method = -1;
+        this.eof = false;
+        this.tl = this.td = null;   // literal/length and distance decoder tables
+        this.bl = this.bd = null;   // number of bits decoded by tl and td
+    },
+    inflate: function(data) {
+        var io = new Z.IO(data);
+        try {
+            var i;
+            while((i = this._decode(io)) > 0) ;
+            return io.output.data;
+        } finally {
+            io.close();
+        }
+    },
+    _decode: function(io) {
+        // decompress an inflated entry
+        var size = io.input.data.length;
+        var i;
+        var n = 0;
+        while(n < size) {
+            if(this.eof && this.method == -1) return n;
+
+            if(io.output.copyLen > 0) {
+                if(this.method != Z.DECODE_STORED_BLOCK) {
+                    // DECODE_STATIC_TREES or DECODE_DYN_TREES
+                    n += io.repeat(io.output.copyLen, io.output.copyDist);
+                } else {
+                    n += io.writeStored(io.output.copyLen);
+                    if(this. io.output.copyLen == 0) this.method = -1; // done
+                }
+                if(n == size) return n;
+            }
+
+            if(this.method == -1) {
+                if(this.eof) break;
+
+                // read in last block bit
+                io.needBits(1);
+                if(io.getBits(1) != 0) this.eof = true;
+                io.dumpBits(1);
+
+                // read in block type
+                io.needBits(2);
+                this.method = io.getBits(2);
+                io.dumpBits(2);
+                this.tl = null;
+                io.output.copyLen = 0;
+            }
+
+            switch(this.method) {
+              case Z.DECODE_STORED_BLOCK:
+                i = this._decodeStored(io, n, size - n);
+                break;
+              case Z.DECODE_STATIC_TREES:
+                if(this.tl != null)
+                    i = this._decodeCodes(io, n, size - n);
+                else
+                    i = this._decodeFixed(io, n, size - n);
+                break;
+              case Z.DECODE_DYN_TREES:
+                if(this.tl != null)
+                    i = this._decodeCodes(io, n, size - n);
+                else
+                    i = this._decodeDynamic(io, n, size - n);
+                break;
+              default: // error
+                i = -1;
+                break;
+            }
+
+            if(i == -1) {
+                if(this.eof) return 0;
+                return -1;
+            }
+            n += i;
+        }
+        return n;
+    },
+    _decodeCodes: function(io, off, size) {
+        /* inflate (decompress) the codes in a deflated (compressed) block.
+           Return an error code or zero if it all goes ok. */
+        var e;                // table entry flag/number of extra bits
+        var t;                // pointer to table entry
+
+        if(size == 0) return 0;
+
+        // inflate the coded data
+        var n = 0;
+        for(;;) {                        // do until end of block
+            io.needBits(this.bl);
+            t = this.tl.list[io.getBits(this.bl)];
+            e = t.e;
+            while(e > 16) {
+                if(e == 99) return -1;
+                io.dumpBits(t.b);
+                e -= 16;
+                io.needBits(e);
+                t = t.t[io.getBits(e)];
+                e = t.e;
+            }
+            io.dumpBits(t.b);
+
+            if(e == 16) {                // then it's a literal
+                n += io.write(t.n);
+                if(n == size) return size;
+                continue;
+            }
+
+            // exit if end of block
+            if(e == 15) break;
+
+            // it's an EOB or a length
+
+            // get length of block to copy
+            io.needBits(e);
+            io.output.copyLen = t.n + io.getBits(e);
+            io.dumpBits(e);
+
+            // decode distance of block to copy
+            io.needBits(this.bd);
+            t = this.td.list[io.getBits(this.bd)];
+            e = t.e;
+
+            while(e > 16) {
+                if(e == 99) return -1;
+                io.dumpBits(t.b);
+                e -= 16;
+                io.needBits(e);
+                t = t.t[io.getBits(e)];
+                e = t.e;
+            }
+            io.dumpBits(t.b);
+            io.needBits(e);
+            io.output.copyDist = io.output.pos - t.n - io.getBits(e);
+            io.dumpBits(e);
+
+            // do the copy
+            n += io.repeat(io.output.copyLen, io.output.copyDist);
+
+            if(n == size) return size;
+        }
+
+        this.method = -1; // done
+        return n;
+    },
+    _decodeStored: function(io, off, size) {
+        /* "decompress" an inflated type 0 (stored) block. */
+        // go to byte boundary
+        var n = io.input.length & 7;
+        io.dumpBits(n);
+
+        // get the length and its complement
+        io.needBits(16);
+        n = io.getBits(16);
+        io.dumpBits(16);
+        io.needBits(16);
+        if(n != ((~(io.input.buffer)) & 0xffff)) return -1;  // error in compressed data
+        io.dumpBits(16);
+
+        // read and output the compressed data
+        var len = n;
+        n = 0;
+        n += io.writeStored(len);
+
+        if(io.output.copyLen == 0) this.method = -1; // done
+        return n;
+    },
+    _decodeFixed: function(io, off, size) {
+        /* decompress an inflated type 1 (fixed Huffman codes) block.  We should
+           either replace this with a custom decoder, or at least precompute the
+           Huffman tables. */
+        var tlFixed = null;
+        var tdFixed;
+        var blFixed, bdFixed;
+        // if first time, set up tables for fixed blocks
+        if(tlFixed == null) {
+            // literal table
+            var i = 0;
+            for(; i < 144; i++) l[i] = 8;
+            for(; i < 256; i++) l[i] = 9;
+            for(; i < 280; i++) l[i] = 7;
+            for(; i < 288; i++) l[i] = 8;  // make a complete, but wrong code set
+            blFixed = 7;
+
+            var h = new Z.HuffmanTree(new Array(288), 288, 257, Z.CPLENS, Z.CPLEXT, blFixed);
+            if(h.status != 0) {
+                alert("HuffmanTree error: "+h.status);
+                return -1;
+            }
+            tlFixed = h.root;
+            blFixed = h.m;
+
+            // distance table
+            for(i = 0; i < 30; i++)        // make an incomplete code set
+                l[i] = 5;
+            bdFixed = 5;
+
+            h = new Z.HuffmanTree(l, 30, 0, Z.CPDIST, Z.CPDEXT, bdFixed);
+            if(h.status > 1) {
+                tlFixed = null;
+                alert("HuffmanTree error: "+h.status);
+                return -1;
+            }
+            tdFixed = h.root;
+            bdFixed = h.m;
+        }
+
+        this.tl = tlFixed;
+        this.td = tdFixed;
+        this.bl = blFixed;
+        this.bd = bdFixed;
+        return this._decodeCodes(io, off, size);
+    },
+    _decodeDynamic: function(io, off, size) {
+        // decompress an inflated type 2 (dynamic Huffman codes) block.
+        var i;                  // temporary variables
+        var j;
+        var l;                  // last length
+        var n;                  // number of lengths to get
+        var t;                  // literal/length code table
+        var nb;                 // number of bit length codes
+        var nl;                 // number of literal/length codes
+        var nd;                 // number of distance codes
+        var ll = new Array(286+30); // literal/length and distance code lengths
+        var h;                  // (Z.HuffmanTree)
+        
+        var lbits = 9;          // bits in base literal/length lookup table
+        var dbits = 6;          // bits in base distance lookup table
+
+        for(i = 0; i < ll.length; i++) ll[i] = 0;
+
+        // read in table lengths
+        io.needBits(5);
+        nl = 257 + io.getBits(5);   // number of literal/length codes
+        io.dumpBits(5);
+        io.needBits(5);
+        nd = 1 + io.getBits(5);     // number of distance codes
+        io.dumpBits(5);
+        io.needBits(4);
+        nb = 4 + io.getBits(4);     // number of bit length codes
+        io.dumpBits(4);
+        if(nl > 286 || nd > 30) return -1;  // bad lengths
+
+        // read in bit-length-code lengths
+        for(j = 0; j < nb; j++) {
+            io.needBits(3);
+            ll[Z.BL_ORDER[j]] = io.getBits(3);
+            io.dumpBits(3);
+        }
+        for(; j < 19; j++) ll[Z.BL_ORDER[j]] = 0;
+
+        // build decoding table for trees--single level, 7 bit lookup
+        this.bl = 7;
+        h = new Z.HuffmanTree(ll, 19, 19, null, null, this.bl);
+        if(h.status != 0) return -1;  // incomplete code set
+
+        this.tl = h.root;
+        this.bl = h.m;
+
+        // read in literal and distance code lengths
+        n = nl + nd;
+        i = l = 0;
+        while(i < n) {
+            io.needBits(this.bl);
+            t = this.tl.list[io.getBits(this.bl)];
+            j = t.b;
+            io.dumpBits(j);
+            j = t.n;
+            if(j < 16)                // length of code in bits (0..15)
+                ll[i++] = l = j;        // save last length in l
+            else if(j == 16) {        // repeat last length 3 to 6 times
+                io.needBits(2);
+                j = 3 + io.getBits(2);
+                io.dumpBits(2);
+                if(i + j > n)
+                    return -1;
+                while(j-- > 0)
+                    ll[i++] = l;
+            } else if(j == 17) {        // 3 to 10 zero length codes
+                io.needBits(3);
+                j = 3 + io.getBits(3);
+                io.dumpBits(3);
+                if(i + j > n)
+                    return -1;
+                while(j-- > 0)
+                    ll[i++] = 0;
+                l = 0;
+            } else {                // j == 18: 11 to 138 zero length codes
+                io.needBits(7);
+                j = 11 + io.getBits(7);
+                io.dumpBits(7);
+                if(i + j > n)
+                    return -1;
+                while(j-- > 0)
+                    ll[i++] = 0;
+                l = 0;
+            }
+        }
+
+        // build the decoding tables for literal/length and distance codes
+        this.bl = lbits;
+        h = new Z.HuffmanTree(ll, nl, 257, Z.CPLENS, Z.CPLEXT, this.bl);
+        if(this.bl == 0)        // no literals or lengths
+            h.status = 1;
+        if(h.status != 0) {
+            if(h.status == 1)
+                ;// **incomplete literal tree**
+            return -1;                // incomplete code set
+        }
+        this.tl = h.root;
+        this.bl = h.m;
+
+        for(i = 0; i < nd; i++) ll[i] = ll[i + nl];
+        this.bd = dbits;
+        h = new Z.HuffmanTree(ll, nd, 0, Z.CPDIST, Z.CPDEXT, this.bd);
+        this.td = h.root;
+        this.bd = h.m;
+
+        if(this.bd == 0 && nl > 257) {   // lengths but no distances
+            // **incomplete distance tree**
+            return -1;
+        }
+        if(h.status == 1) {
+            ;// **incomplete distance tree**
+        }
+        if(h.status != 0) return -1;
+        // decompress until an end-of-block code
+        return this._decodeCodes(io, off, size);
+    }
 };
