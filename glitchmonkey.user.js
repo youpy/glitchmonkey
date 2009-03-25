@@ -1,7 +1,8 @@
 // ==UserScript==
-// @name           GlitchMonkey
-// @namespace      http://d.hatena.ne.jp/youpy/
-// @include        *
+// @name GlitchMonkey
+// @namespace http://d.hatena.ne.jp/youpy/
+// @description corrompe las fotos de cualquier website
+// @include *
 // ==/UserScript==
 
 var Corruptions = {
@@ -18,13 +19,6 @@ var Corruptions = {
 
 Array.filter(document.images, is_glitchable).forEach(glitch);
 
-if (window.AutoPagerize) {
-  window.AutoPagerize.addFilter(function (pages) {
-    pages.forEach(function (page) {
-      Array.filter(page.getElementsByTagName('img'), is_glitchable).forEach(glitch);
-    });
-  });
-}
 document.addEventListener("DOMNodeInserted", function(e){
 	if (!e.target.tagName) return;
 	Array.filter(e.target.getElementsByTagName('img'), is_glitchable).forEach(function(el){
